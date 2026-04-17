@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Panel de Clientes - Drolpet</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; padding: 20px; }
+        h1 { color: #333; margin-bottom: 10px; }
+        .toolbar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; flex-wrap: wrap; }
+        .estado { padding: 8px 16px; border-radius: 20px; font-size: 14px; }
+        .conectado { background: #d4edda; color: #155724; }
+        .desconectado { background: #f8d7da; color: #721c24; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; color: white; }
+        .btn-primary { background: #007bff; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-success { background: #28a745; }
+        .btn-success:hover { background: #1e7e34; }
+        .btn-warning { background: #fd7e14; }
+        .btn-warning:hover { background: #e8680a; }
+        .btn-danger { background: #dc3545; }
+        .btn-danger:hover { background: #b02a37; }
+        .btn:disabled { background: #aaa; cursor: not-allowed; }
+        select { padding: 8px; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        th { background: #343a40; color: white; padding: 12px 16px; text-align: left; font-size: 13px; }
+        td { padding: 10px 16px; border-bottom: 1px solid #eee; font-size: 13px; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #f8f9fa; }
+        .badge { padding: 3px 8px; border-radius: 10px; font-size: 11px; color: white; }
+        .badge-ok { background: #28a745; }
+        .badge-error { background: #dc3545; }
+        .badge-vacio { background: #6c757d; }
+        .badge-beta { background: #6f42c1; }
+        .badge-online { background: #28a745; }
+        .badge-offline { background: #6c757d; }
+        .grupo-select { padding: 4px; border-radius: 4px; border: 1px solid #ccc; font-size: 12px; }
+        #log { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 12px; height: 180px; overflow-y: auto; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
+        .modal-content { background: white; margin: 15% auto; padding: 20px; border-radius: 8px; width: 400px; }
+        .modal h3 { margin-bottom: 15px; }
+        .modal label { display: block; margin-bottom: 5px; font-size: 13px; font-weight: bold; }
+        .modal input, .modal select, .modal textarea { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc; margin-bottom: 12px; font-size: 13px; }
+        .modal-btns { display: flex; gap: 10px; justify-content: flex-end; }
+    </style>
+</head>
+<body>
+    <h1>🖥️ Panel de Clientes</h1>
+
+    <div class="toolbar">
+        <div id="estadoHub" class="estado desconectado">⚪ Desconectado</div>
+        <select id="filtroGrupo" onchange="filtrarTabla()">
+            <option value="">Todos los grupos</option>
+            <option value="produccion">Producción</option>
+            <option value="beta">Beta</option>
+            <option value="lima">Lima</option>
+            <option value="provincias">Provincias</option>
+        </select>
+        <button class="btn btn-warning" onclick="migrarGrupo()">⚡ Migrar grupo</button>
+        <button class="btn btn-danger" onclick="migrarTodos()">🚀 Migrar todos</button>
+        <button class="btn btn-primary" onclick="cargarClientes()">🔄 Refrescar</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Estado</th>
+                <th>Empresa</th>
+                <th>RUC</th>
+                <th>Versión BD</th>
+                <th>Grupo</th>
+                <th>Beta</th>
+                <th>Último resultado</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="tablaClientes">
+            <tr><td colspan="8" style="text-align:center;color:#aaa">Cargando...</td></tr>
+        </tbody>
+    </table>
+
+    <div id="log">[Log de eventos]</div>
+
+    <!-- Modal editar cliente -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3>✏️ Editar cliente</h3>
+            <input type="hidden" id="editRuc">
+            <label>Grupo</label>
+            <select id="editGrupo">
+                <option value="produccion">Producción</option>
+                <option value="beta">Beta</option>
+                <option value="lima">Lima</option>
+                <option value="provincias">Provincias</option>
+            </select>
+            <label>¿Es cliente beta?</label>
+            <select id="editEsBeta">
+                <option value="false">No</option>
+                <option value="true">Sí</option>
+            </select>
+            <label>Notas</label>
+            <textarea id="editNotas" rows="3"></textarea>
+            <div class="modal-btns">
+                <button class="btn btn-primary" onclick="guardarEdicion()">Guardar</button>
+                <button class="btn" style="background:#6c757d" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Clientes conectados al Hub (tiempo real)
+        const conectados = {};
+        // Todos los clientes de PostgreSQL
+        let todosClientes = [];
+
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/hubs/clientes")
+            .withAutomaticReconnect()
+            .build();
+
+        // Cliente conectado al Hub
+        connection.on("ClienteConectado", (cliente) => {
+            conectados[cliente.ruc] = cliente;
+            renderTabla();
+            log(`✅ Conectado: ${cliente.nombreEmpresa} v${cliente.versionBd}`);
+        });
+
+        // Resultado de migración
+        connection.on("ResultadoMigracion", (data) => {
+            if (conectados[data.ruc])
+                conectados[data.ruc].ultimoResultado = data.ok ? `OK: ${data.mensaje}` : `ERROR: ${data.mensaje}`;
+            renderTabla();
+            log(data.ok ? `✅ ${data.ruc}: ${data.mensaje}` : `❌ ${data.ruc}: ${data.mensaje}`);
+        });
+
+        connection.on("Error", (msg) => log(`❌ ${msg}`));
+
+        async function iniciar() {
+            try {
+                await connection.start();
+                document.getElementById("estadoHub").className = "estado conectado";
+                document.getElementById("estadoHub").textContent = "🟢 Conectado";
+                log("Conectado al Hub");
+
+                // Cargar clientes ya conectados al Hub
+                const lista = await connection.invoke("ObtenerClientes");
+                lista.forEach(c => conectados[c.ruc] = c);
+
+                // Cargar todos los clientes de PostgreSQL
+                await cargarClientes();
+            } catch (err) {
+                log(`❌ Error: ${err}`);
+                setTimeout(iniciar, 5000);
+            }
+        }
+
+        async function cargarClientes() {
+            try {
+                const res = await fetch('/api/panel/clientes');
+                todosClientes = await res.json();
+                renderTabla();
+            } catch (err) {
+                log(`❌ Error cargando clientes: ${err}`);
+            }
+        }
+
+        function renderTabla() {
+            const filtro = document.getElementById("filtroGrupo").value;
+            const tbody = document.getElementById("tablaClientes");
+
+            let lista = todosClientes;
+            if (filtro) lista = lista.filter(c => c.grupo === filtro);
+
+            if (lista.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa">Sin clientes</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = lista.map(c => {
+                const online = conectados[c.ruc];
+                const versionBd = online ? online.versionBd : '—';
+                const ultimoResultado = online ? online.ultimoResultado : '';
+
+                return `<tr>
+                    <td><span class="badge ${online ? 'badge-online' : 'badge-offline'}">${online ? '🟢 Online' : '⚫ Offline'}</span></td>
+                    <td>${c.razonSocial}</td>
+                    <td>${c.ruc}</td>
+                    <td>${versionBd}</td>
+                    <td>${c.grupo || '—'}</td>
+                    <td>${c.esBeta ? '<span class="badge badge-beta">Beta</span>' : '—'}</td>
+                    <td>${formatResultado(ultimoResultado)}</td>
+                    <td style="display:flex;gap:6px">
+                        ${online ? `<button class="btn btn-success" onclick="migrarCliente('${c.ruc}', this)">Migrar</button>` : ''}
+                        <button class="btn btn-primary" onclick="abrirModal('${c.ruc}', '${c.grupo}', ${c.esBeta}, \`${c.notas}\`)">✏️</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function filtrarTabla() {
+            renderTabla();
+        }
+
+        async function migrarCliente(ruc, btn) {
+            btn.disabled = true;
+            btn.textContent = "...";
+            log(`⏳ Migrando ${ruc}...`);
+            try {
+                await connection.invoke("EnviarComandoMigrar", ruc);
+                log(`📤 Comando enviado a ${ruc}`);
+            } catch (err) {
+                log(`❌ Error: ${err}`);
+            } finally {
+                setTimeout(() => { btn.disabled = false; btn.textContent = "Migrar"; }, 5000);
+            }
+        }
+
+        async function migrarGrupo() {
+            const grupo = document.getElementById("filtroGrupo").value;
+            if (!grupo) { alert("Seleccioná un grupo primero"); return; }
+            if (!confirm(`¿Migrar todos los clientes del grupo "${grupo}"?`)) return;
+            log(`⏳ Migrando grupo ${grupo}...`);
+            try {
+                const res = await fetch(`/api/panel/migrar/grupo/${grupo}`, { method: 'POST' });
+                const data = await res.json();
+                log(`📤 Comando enviado a ${data.clientesNotificados} clientes del grupo ${grupo}`);
+            } catch (err) {
+                log(`❌ Error: ${err}`);
+            }
+        }
+
+        async function migrarTodos() {
+            if (!confirm("¿Migrar TODOS los clientes conectados?")) return;
+            log("⏳ Migrando todos los clientes...");
+            try {
+                await fetch('/api/panel/migrar/todos', { method: 'POST' });
+                log("📤 Comando enviado a todos los clientes");
+            } catch (err) {
+                log(`❌ Error: ${err}`);
+            }
+        }
+
+        function abrirModal(ruc, grupo, esBeta, notas) {
+            document.getElementById("editRuc").value = ruc;
+            document.getElementById("editGrupo").value = grupo || "produccion";
+            document.getElementById("editEsBeta").value = esBeta ? "true" : "false";
+            document.getElementById("editNotas").value = notas || "";
+            document.getElementById("modal").style.display = "block";
+        }
+
+        function cerrarModal() {
+            document.getElementById("modal").style.display = "none";
+        }
+
+        async function guardarEdicion() {
+            const ruc    = document.getElementById("editRuc").value;
+            const grupo  = document.getElementById("editGrupo").value;
+            const esBeta = document.getElementById("editEsBeta").value === "true";
+            const notas  = document.getElementById("editNotas").value;
+
+            try {
+                const res = await fetch(`/api/panel/clientes/${ruc}/grupo`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ grupo, esBeta, notas })
+                });
+                if (res.ok) {
+                    log(`✅ Cliente ${ruc} actualizado — Grupo: ${grupo}, Beta: ${esBeta}`);
+                    cerrarModal();
+                    await cargarClientes();
+                }
+            } catch (err) {
+                log(`❌ Error: ${err}`);
+            }
+        }
+
+        function formatResultado(resultado) {
+            if (!resultado) return '<span class="badge badge-vacio">—</span>';
+            if (resultado.startsWith('OK')) return `<span class="badge badge-ok">${resultado}</span>`;
+            return `<span class="badge badge-error">${resultado}</span>`;
+        }
+
+        function log(msg) {
+            const div = document.getElementById("log");
+            const hora = new Date().toLocaleTimeString();
+            div.innerHTML += `\n[${hora}] ${msg}`;
+            div.scrollTop = div.scrollHeight;
+        }
+
+        connection.onreconnecting(() => {
+            document.getElementById("estadoHub").className = "estado desconectado";
+            document.getElementById("estadoHub").textContent = "🟡 Reconectando...";
+        });
+
+        connection.onreconnected(async () => {
+            document.getElementById("estadoHub").className = "estado conectado";
+            document.getElementById("estadoHub").textContent = "🟢 Conectado";
+            const lista = await connection.invoke("ObtenerClientes");
+            lista.forEach(c => conectados[c.ruc] = c);
+            renderTabla();
+        });
+
+        iniciar();
+    </script>
+</body>
+</html>
