@@ -133,6 +133,59 @@ public class PanelController : ControllerBase
             return StatusCode(500, new { error = ex.Message });
         }
     }
+    // GET api/panel/terminales
+    [HttpGet("terminales")]
+    public async Task<IActionResult> GetTerminales()
+    {
+        try
+        {
+            var cs = _config.GetConnectionString("DropletDB");
+            var lista = new List<object>();
+
+            await using var conn = new NpgsqlConnection(cs);
+            await conn.OpenAsync();
+
+            // Trae el último registro por cliente+equipo
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT DISTINCT ON (tr.cliente_id, tr.nombre_equipo)
+                    c.ruc,
+                    tr.nombre_equipo,
+                    tr.nro_ptoventa,
+                    tr.tipo,
+                    tr.plataforma,
+                    tr.version,
+                    tr.version_bd,
+                    tr.ip_local,
+                    tr.fecha_evento
+                FROM touch_registros tr
+                JOIN clientes c ON c.id = tr.cliente_id
+                ORDER BY tr.cliente_id, tr.nombre_equipo, tr.fecha_evento DESC", conn);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                lista.Add(new
+                {
+                    ruc          = reader.GetString(0),
+                    nombreEquipo = reader.IsDBNull(1) ? "" : reader.GetString(1),
+                    nroPtoVenta  = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                    tipo         = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                    plataforma   = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                    version      = reader.IsDBNull(5) ? "" : reader.GetString(5),
+                    versionBd    = reader.IsDBNull(6) ? "" : reader.GetString(6),
+                    ipLocal      = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                    fechaEvento  = reader.IsDBNull(8) ? "" 
+                                : reader.GetDateTime(8).ToString("dd/MM/yyyy HH:mm")
+                });
+            }
+
+            return Ok(lista);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
 }
 
 public class AsignarGrupoDto
